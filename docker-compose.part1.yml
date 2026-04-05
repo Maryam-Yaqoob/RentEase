@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+
+  db:
+    image: postgres:15
+    container_name: rentease_db_p1
+    environment:
+      POSTGRES_DB: rentease
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - rentease_pgdata_p1:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: rentease_backend_p1
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/rentease
+      SECRET_KEY: supersecretkey123
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    container_name: rentease_frontend_p1
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run build && npm run preview -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  rentease_pgdata_p1:
