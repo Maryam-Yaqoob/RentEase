@@ -1,0 +1,46 @@
+services:
+
+  db:
+    image: postgres:15
+    container_name: rentease_db_p2
+    environment:
+      POSTGRES_DB: rentease
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - rentease_pgdata_p2:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    restart: unless-stopped
+
+  backend:
+    image: python:3.11-slim
+    container_name: rentease_backend_p2
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    command: sh -c "pip install -r requirements.txt -q && uvicorn main:app --host 0.0.0.0 --port 8001"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/rentease
+      SECRET_KEY: supersecretkey123
+    ports:
+      - "8001:8001"
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    container_name: rentease_frontend_p2
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run build && npm run preview -- --host 0.0.0.0 --port 5174"
+    ports:
+      - "5174:5174"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  rentease_pgdata_p2:
