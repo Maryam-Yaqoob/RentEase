@@ -14,12 +14,6 @@ pipeline {
             }
         }
 
-        stage('Build') {
-            steps {
-                sh 'docker compose -f ${COMPOSE_FILE} build --no-cache'
-            }
-        }
-
         stage('Deploy') {
             steps {
                 sh 'docker compose -f ${COMPOSE_FILE} up -d'
@@ -37,4 +31,3 @@ pipeline {
         }
     }
 }
-
