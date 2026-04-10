@@ -14,12 +14,13 @@ services:
     restart: unless-stopped
 
   backend:
-    image: python:3.11-slim
+    build:
+      context: .
+      dockerfile: Dockerfile.part2
     container_name: rentease_backend_p2
     working_dir: /app
     volumes:
       - ./backend:/app
-    command: sh -c "pip install -r requirements.txt -q && uvicorn main:app --host 0.0.0.0 --port 8001"
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/rentease
       SECRET_KEY: supersecretkey123
@@ -44,3 +45,4 @@ services:
 
 volumes:
   rentease_pgdata_p2:
+
