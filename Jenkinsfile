@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+    }
+
     stages {
 
         stage('Checkout') {
@@ -13,13 +17,13 @@ pipeline {
 
         stage('Build') {
             steps {
-                sh 'docker compose -f docker-compose.part2.yml build'
+                sh 'docker compose -f docker-compose.part2.yml build --no-cache'
             }
         }
 
         stage('Deploy') {
             steps {
-                sh 'docker compose -f docker-compose.part2.yml up -d'
+                sh 'docker compose -f docker-compose.part2.yml up -d --no-build'
             }
         }
 
@@ -30,7 +34,7 @@ pipeline {
             echo 'Pipeline failed!'
         }
         success {
-            echo 'RentEase Part 2 built and deployed successfully!'
+            echo 'RentEase Part 2 deployed successfully!'
         }
     }
 }
