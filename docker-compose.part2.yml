@@ -8,15 +8,13 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes:
-      - rentease_pgdata_p2:/var/lib/postgresql/data
+      - postgres_data_p2:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     restart: unless-stopped
 
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.part2
+    image: python:3.11-slim
     container_name: rentease_backend_p2
     working_dir: /app
     volumes:
@@ -24,10 +22,14 @@ services:
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/rentease
       SECRET_KEY: supersecretkey123
+      CORS_ORIGINS: '["*"]'
     ports:
-      - "8001:8001"
+      - "8001:8000"
     depends_on:
       - db
+    command: >
+      sh -c "pip install -r requirements.txt &&
+      uvicorn main:app --host 0.0.0.0 --port 8000"
     restart: unless-stopped
 
   frontend:
@@ -36,13 +38,13 @@ services:
     working_dir: /app
     volumes:
       - ./frontend:/app
-    command: sh -c "npm install && npm run build && npm run preview -- --host 0.0.0.0 --port 5174"
     ports:
-      - "5174:5174"
+      - "5174:5173"
     depends_on:
       - backend
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
     restart: unless-stopped
 
 volumes:
-  rentease_pgdata_p2:
-
+  postgres_data_p2:
+    driver: local
