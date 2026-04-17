@@ -1,7 +1,7 @@
 # 🏠 RentEase - Digital Rental Platform
 
 A modern, full-stack web application connecting tenants and landlords for seamless property rental management.
-
+# CHECKING JENKINS
 ![Tech Stack](https://img.shields.io/badge/React-18.2-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104-green)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Latest-blue)
