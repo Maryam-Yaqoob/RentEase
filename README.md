@@ -8,7 +8,7 @@ A modern, full-stack web application connecting tenants and landlords for seamle
 ![Tailwind](https://img.shields.io/badge/TailwindCSS-3.3-cyan)
 
 ---
-HEY
+HEY I'm Maryam
 
 ## 📋 Table of Contents
 
