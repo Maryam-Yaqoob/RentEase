@@ -39,31 +39,30 @@ pipeline {
             }
         }
 
-    }
-    
-    stage('Run Selenium Tests') {
-        steps {
-            sh '''
-            rm -rf RentEase-Selenium-Tests
-            git clone https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git
+        stage('Run Selenium Tests') {
+            steps {
+                echo '========== Running Selenium Tests =========='
+                sh '''
+                rm -rf RentEase-Selenium-Tests
+                git clone https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git
 
-            FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2)
+                FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2)
 
-            docker run --rm \
-              --network rentease_default \
-              -e BASE_URL=http://$FRONTEND_IP:5173 \
-              -v $WORKSPACE/RentEase-Selenium-Tests:/tests \
-              -w /tests \
-              markhobson/maven-chrome \
-              mvn clean test
-            '''
+                docker run --rm \
+                  --network rentease_default \
+                  -e BASE_URL=http://$FRONTEND_IP:5173 \
+                  -v $WORKSPACE/RentEase-Selenium-Tests:/tests \
+                  -w /tests \
+                  markhobson/maven-chrome \
+                  mvn clean test
+                '''
+            }
         }
-      }     
     }
 
     post {
         always {
-             emailext(
+            emailext(
                 subject: "RentEase Pipeline Result: ${currentBuild.currentResult}",
                 body: """
                 Job: ${env.JOB_NAME}
@@ -72,8 +71,7 @@ pipeline {
                 Console Output: ${env.BUILD_URL}
                 """,
                 to: "qasimalik@gmail.com"
-             )
+            )
         }
-   }
+    }
 }
-EOF
