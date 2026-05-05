@@ -61,11 +61,17 @@ pipeline {
 }     
 
     post {
-        success {
-            echo 'RentEase Part 2 deployed successfully!'
-        }
-        failure {
-            echo 'Pipeline failed!'
-        }
+    always {
+        emailext(
+            subject: "RentEase Pipeline Result: ${currentBuild.currentResult}",
+            body: """
+            Job: ${env.JOB_NAME}
+            Build Number: ${env.BUILD_NUMBER}
+            Status: ${currentBuild.currentResult}
+            Console Output: ${env.BUILD_URL}
+            """,
+            to: "qasimalik@gmail.com"
+        )
     }
+}
 }
