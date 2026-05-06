@@ -126,8 +126,8 @@ ${env.BUILD_URL}
 
         success {
             echo 'Pipeline completed successfully!'
-            echo 'Frontend URL: http://13.50.233.104:5174'
-            echo 'Backend URL: http://13.50.233.104:8001'
+            echo 'Frontend URL: http://13.48.132.213:5174'
+            echo 'Backend URL: http://13.48.132.213:8001'
         }
 
         failure {
