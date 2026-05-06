@@ -35,6 +35,7 @@ pipeline {
             steps {
                 echo '========== Stopping Previous Services =========='
                 sh 'docker compose -f ${DOCKER_COMPOSE_FILE} down || true'
+                sh 'docker rm -f rentease_db_p2 rentease_backend_p2 rentease_frontend_p2 || true'
                 sh 'sleep 5'
 
                 echo '========== Starting Services =========='
@@ -104,7 +105,7 @@ pipeline {
 
         always {
             emailext(
-                to: 'maryamyaqub616@gmail.com',
+                to: 'qasimalik@gmail.com',
                 subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                 body: """
 RentEase Pipeline Result
