@@ -10,68 +10,129 @@ pipeline {
 
         stage('Clone Repository') {
             steps {
-                echo '========== Cloning Repository =========='
+                echo '========== Cloning Main Project =========='
                 git branch: 'main',
-                    credentialsId: 'github-credentials',
                     url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
         stage('Verify Docker Setup') {
             steps {
-                echo '========== Verifying Docker =========='
+                echo '========== Checking Docker =========='
                 sh 'docker --version'
                 sh 'docker compose version'
             }
         }
 
-        stage('Build') {
+        stage('Build Docker Images') {
             steps {
-                echo '========== Building Containers =========='
+                echo '========== Building Docker Images =========='
                 sh 'docker compose -f ${DOCKER_COMPOSE_FILE} build --no-cache'
             }
         }
 
-        stage('Deploy') {
+        stage('Start Services') {
             steps {
-                echo '========== Deploying Application =========='
+                echo '========== Stopping Previous Services =========='
+                sh 'docker compose -f ${DOCKER_COMPOSE_FILE} down || true'
+                sh 'sleep 5'
+
+                echo '========== Starting Services =========='
                 sh 'docker compose -f ${DOCKER_COMPOSE_FILE} up -d'
+                sh 'sleep 15'
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                echo '========== Verifying Services =========='
+                sh '''
+                    echo "Checking PostgreSQL..."
+                    docker ps | grep rentease_db_p2
+
+                    echo "Checking Backend..."
+                    docker ps | grep rentease_backend_p2
+
+                    echo "Checking Frontend..."
+                    docker ps | grep rentease_frontend_p2
+                '''
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
+                echo '========== Cloning Selenium Test Repo =========='
+
+                dir('selenium-tests') {
+                    git branch: 'main',
+                        url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                }
+
                 echo '========== Running Selenium Tests =========='
-                sh '''
-                rm -rf RentEase-Selenium-Tests
-                git clone https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git
 
-                FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2)
+                script {
+                    env.FRONTEND_IP = sh(
+                        script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
+                        returnStdout: true
+                    ).trim()
+                }
 
-                docker run --rm \
-                  --network rentease_default \
-                  -e BASE_URL=http://$FRONTEND_IP:5173 \
-                  -v $WORKSPACE/RentEase-Selenium-Tests:/tests \
-                  -w /tests \
-                  markhobson/maven-chrome \
-                  mvn clean test
-                '''
+                dir('selenium-tests') {
+                    sh '''
+                    docker run --rm \
+                      --network rentease_default \
+                      -e BASE_URL=http://$FRONTEND_IP:5173 \
+                      -v $PWD:/tests \
+                      -w /tests \
+                      markhobson/maven-chrome \
+                      mvn clean test
+                    '''
+                }
+            }
+
+            post {
+                always {
+                    dir('selenium-tests') {
+                        junit '**/target/surefire-reports/*.xml'
+                    }
+                }
             }
         }
     }
 
     post {
+
         always {
             emailext(
-                subject: "RentEase Pipeline Result: ${currentBuild.currentResult}",
+                to: 'qasimalik@gmail.com',
+                subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                 body: """
-                Job: ${env.JOB_NAME}
-                Build Number: ${env.BUILD_NUMBER}
-                Status: ${currentBuild.currentResult}
-                Console Output: ${env.BUILD_URL}
-                """,
-                to: "qasimalik@gmail.com"
+RentEase Pipeline Result
+
+Build Number: ${env.BUILD_NUMBER}
+Build Status: ${currentBuild.currentResult}
+
+Project Repo:
+https://github.com/Maryam-Yaqoob/RentEase
+
+Selenium Repo:
+https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests
+
+Build URL:
+${env.BUILD_URL}
+"""
             )
+        }
+
+        success {
+            echo 'Pipeline completed successfully!'
+            echo 'Frontend URL: http://13.50.233.104:5174'
+            echo 'Backend URL: http://13.50.233.104:8001'
+        }
+
+        failure {
+            echo 'Pipeline failed!'
+            sh 'docker compose -f ${DOCKER_COMPOSE_FILE} down || true'
         }
     }
 }
