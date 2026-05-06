@@ -104,7 +104,7 @@ pipeline {
 
         always {
             emailext(
-                to: 'qasimalik@gmail.com',
+                to: 'maryamyaqub616@gmail.com',
                 subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                 body: """
 RentEase Pipeline Result
