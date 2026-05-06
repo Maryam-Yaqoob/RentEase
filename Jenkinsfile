@@ -80,7 +80,7 @@ pipeline {
                 dir('selenium-tests') {
                     sh '''
                     docker run --rm \
-                      --network rentease_default \
+                      --network rentease-pipeline_default \
                       -e BASE_URL=http://$FRONTEND_IP:5173 \
                       -v $PWD:/tests \
                       -w /tests \
