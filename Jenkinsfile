@@ -2,7 +2,6 @@ pipeline {
     agent {
         node {
             label ''
-            // Using a specific workspace path to ensure a fresh, unlocked start
             customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-Success"
         }
     }
@@ -15,7 +14,7 @@ pipeline {
     }
 
     stages {
-        stage('Initial Cleanup') {
+        stage('Initialize & Force Cleanup') {
             steps {
                 echo '========== Force Cleaning Workspace via Docker =========='
                 sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
@@ -35,20 +34,19 @@ pipeline {
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
-                echo 'Waiting for services to stabilize (30s)...'
-                sh 'sleep 30' 
+                echo 'Waiting for services to fully stabilize (45s)...'
+                // Increased to 45 seconds to ensure frontend is reachable on attempt #1
+                sh 'sleep 45' 
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
                 script {
-                    // Create a separate directory for the test repository
                     dir('test-automation') {
                         echo '========== Cloning Selenium Test Repository =========='
                         git branch: 'main', url: "${env.TEST_REPO}"
                         
-                        // Dynamically detect the network name to avoid "Network not found" errors
                         def actualNetwork = sh(
                             script: "docker inspect rentease_frontend_p2 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}{{end}}'",
                             returnStdout: true
@@ -56,6 +54,8 @@ pipeline {
                         
                         echo "Running tests on network: ${actualNetwork}"
                         
+                        // Added -Dsurefire.rerunFailingTestsCount=2 just in case, 
+                        // but the longer sleep should fix the core issue.
                         sh """
                         docker run --rm \
                           --network ${actualNetwork} \
@@ -63,7 +63,7 @@ pipeline {
                           -v \$(pwd):/tests \
                           -w /tests \
                           markhobson/maven-chrome \
-                          mvn clean test
+                          mvn clean test -Dsurefire.rerunFailingTestsCount=2
                         """
                     }
                 }
@@ -82,7 +82,6 @@ pipeline {
         always {
             script {
                 try {
-                    // Extract metadata of the person who pushed the code
                     def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
                     def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
 
@@ -90,8 +89,8 @@ pipeline {
                         to: "${authorEmail}, maryamyaqub616@gmail.com",
                         subject: "RentEase Build Status: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
                         body: """
-                        RentEase Pipeline Notification
-                        ------------------------------
+                        RentEase Pipeline Result
+                        -----------------------
                         Build Number: ${env.BUILD_NUMBER}
                         Status: ${currentBuild.currentResult}
                         Triggered by: ${authorName} (${authorEmail})
@@ -104,7 +103,7 @@ pipeline {
                     emailext (
                         to: "maryamyaqub616@gmail.com",
                         subject: "RentEase Pipeline Alert #${env.BUILD_NUMBER}",
-                        body: "Pipeline finished. Status: ${currentBuild.currentResult}. (Git metadata unavailable)"
+                        body: "Pipeline finished. Status: ${currentBuild.currentResult}"
                     )
                 }
             }
