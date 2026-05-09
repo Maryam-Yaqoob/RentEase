@@ -1,19 +1,21 @@
 pipeline {
-    agent any
+    agent {
+        node {
+            // By adding '-v2' to the workspace name, we bypass the locked/broken folder entirely
+            customWorkspace "/var/lib/jenkins/workspace/RentEase-Pipeline-v2"
+        }
+    }
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
     }
 
     stages {
-        stage('Self-Heal & Cleanup') {
+        stage('Initial Cleanup') {
             steps {
-                echo '========== Removing Git Locks and Root Files =========='
-                // 1. This deletes the .lock file automatically if it exists
-                // 2. This uses Docker to wipe root-owned folders that cause Permission Denied
-                sh '''
-                    docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -f /ws/.git/config.lock && rm -rf /ws/* /ws/.[!.]*"
-                '''
+                echo '========== Cleaning Workspace =========='
+                // This wipes the new workspace to keep it tidy
+                deleteDir()
             }
         }
 
@@ -25,7 +27,7 @@ pipeline {
             }
         }
 
-        stage('Build & Start Services') {
+        stage('Build & Start') {
             steps {
                 sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} up -d"
@@ -62,8 +64,8 @@ pipeline {
     post {
         always {
             script {
-                // Manually extracting committer to fix the "Triggered by: null" issue
-                def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim() ?: "System"
+                // Logic to identify the committer to fix the 'Triggered by: null' issue
+                def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim() ?: "Committer"
                 def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim() ?: "maryamyaqub616@gmail.com"
 
                 emailext (
@@ -81,8 +83,7 @@ pipeline {
                     recipientProviders: [culprits(), developers()]
                 )
             }
-            
-            echo "Cleaning up environment..."
+            // Cleanup services
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
         }
     }
