@@ -34,9 +34,24 @@ pipeline {
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
-                echo 'Waiting for services to fully stabilize (45s)...'
-                // Increased to 45 seconds to ensure frontend is reachable on attempt #1
-                sh 'sleep 45' 
+                
+                echo 'Waiting for frontend to be ready...'
+                sh '''
+                    echo "Waiting for frontend container to be healthy..."
+                    for i in $(seq 1 30); do
+                        STATUS=$(docker inspect --format='{{.State.Health.Status}}' rentease_frontend_p2 2>/dev/null || echo "unknown")
+                        echo "Attempt $i: frontend status = $STATUS"
+                        if [ "$STATUS" = "healthy" ]; then
+                            echo "Frontend is ready!"
+                            break
+                        fi
+                        if [ "$i" = "30" ]; then
+                            echo "Frontend did not become healthy in time"
+                            exit 1
+                        fi
+                        sleep 10
+                done
+            '''
             }
         }
 
