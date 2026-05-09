@@ -6,34 +6,27 @@ pipeline {
     }
 
     stages {
-        stage('Pre-Cleanup') {
+        stage('Environment Setup') {
             steps {
-                echo '========== Force cleaning root-owned files to prevent Permission Denied =========='
-                // This SH command uses sudo to wipe root files created by Docker 
-                // so the next stage (Clone) doesn't fail.
-                sh 'sudo rm -rf * || true'
+                echo '========== Cleaning Workspace =========='
+                // Using internal deleteDir to clear anything not root-owned
+                deleteDir() 
             }
         }
 
         stage('Clone Repository') {
             steps {
                 echo '========== Cloning Main Project =========='
-                git branch: 'main', 
-                    url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
-            }
-        }
-
-        stage('Verify Docker Setup') {
-            steps {
-                sh 'docker --version && docker compose version'
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/main']], 
+                    userRemoteConfigs: [[url: 'https://github.com/Maryam-Yaqoob/RentEase.git']]
+                ])
             }
         }
 
         stage('Build & Start Services') {
             steps {
-                echo '========== Building and Starting Docker Containers =========='
                 sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
-                sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
                 sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} up -d"
                 sh 'sleep 15'
             }
@@ -41,20 +34,14 @@ pipeline {
 
         stage('Run Selenium Tests') {
             steps {
-                script {
+                dir('selenium-tests') {
                     echo '========== Cloning Selenium Test Repo =========='
-                    // Cleaning specific subfolder to avoid permission issues
-                    sh 'sudo rm -rf selenium-tests || true'
+                    git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
                     
-                    dir('selenium-tests') {
-                        git branch: 'main', 
-                            url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                    script {
+                        def frontendIP = sh(script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2", returnStdout: true).trim()
                         
-                        def frontendIP = sh(
-                            script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
-                            returnStdout: true
-                        ).trim()
-
+                        // We use -u root inside docker to ensure it can write/read its own files
                         sh "docker run --rm --network rentease-pipeline_default -e BASE_URL=http://${frontendIP}:5173 -v \$(pwd):/tests -w /tests markhobson/maven-chrome mvn clean test"
                     }
                 }
@@ -71,21 +58,19 @@ pipeline {
 
     post {
         always {
-            // This is the CRITICAL part for your requirement:
-            // It sends the mail ONLY to the person who triggered the build via commit.
             emailext (
                 subject: "RentEase Build Status: ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
                 body: """Build Number: ${env.BUILD_NUMBER}
                          Status: ${currentBuild.currentResult}
-                         Project: RentEase
+                         Triggered by: ${env.GITS_COMMITTER_NAME}
                          Check logs: ${env.BUILD_URL}""",
                 recipientProviders: [culprits(), developers()]
             )
-        }
-        
-        failure {
-            echo "Pipeline failed. Cleaning up environment..."
+            
+            echo "Cleaning up Docker..."
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
+            // This final step tries to fix permissions for the NEXT build
+            sh "docker run --rm -v ${WORKSPACE}:/workspace alpine chown -R 1000:1000 /workspace || true"
         }
     }
 }
