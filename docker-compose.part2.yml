@@ -1,96 +1,68 @@
-
+version: '3.8'
 
 services:
-
   db:
     image: postgres:15
     container_name: rentease_db_p2
-
     environment:
       POSTGRES_DB: rentease
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-
     volumes:
       - postgres_data_p2:/var/lib/postgresql/data
-
     ports:
       - "5433:5432"
-
     restart: unless-stopped
-
     networks:
       - rentease_network
-
 
   backend:
     image: python:3.11-slim
     container_name: rentease_backend_p2
-
     working_dir: /app
-
+    # Run as the Jenkins user (UID 1000)
     user: "1000:1000"
-
     volumes:
       - ./backend:/app
-
+      # Anonymous volume: prevents Docker from locking __pycache__ on your EC2
+      - /app/__pycache__
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/rentease
       SECRET_KEY: supersecretkey123
       CORS_ORIGINS: '["*"]'
-
     ports:
       - "8001:8000"
-
     depends_on:
       - db
-
     command: >
-      sh -c "
-      pip install --no-cache-dir -r requirements.txt &&
-      find /app -type d -name '__pycache__' -exec rm -rf {} + || true &&
-      uvicorn main:app --host 0.0.0.0 --port 8000
-      "
-
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             uvicorn main:app --host 0.0.0.0 --port 8000"
     restart: unless-stopped
-
     networks:
       - rentease_network
-
 
   frontend:
     image: node:20-alpine
     container_name: rentease_frontend_p2
-
     working_dir: /app
-
     user: "1000:1000"
-
     volumes:
       - ./frontend:/app
-
+      # Anonymous volume: prevents Docker from locking node_modules on your EC2
+      - /app/node_modules
     ports:
       - "5174:5173"
-
     depends_on:
       - backend
-
     command: >
-      sh -c "
-      npm install &&
-      npm run dev -- --host 0.0.0.0
-      "
-
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
     restart: unless-stopped
-
     networks:
       - rentease_network
-
 
 volumes:
   postgres_data_p2:
     driver: local
-
 
 networks:
   rentease_network:
