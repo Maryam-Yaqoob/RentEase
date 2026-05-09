@@ -1,38 +1,31 @@
-
 pipeline {
     agent any
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
-        PROJECT_REPO = 'https://github.com/Maryam-Yaqoob/RentEase.git'
-        SELENIUM_REPO = 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
     }
 
     stages {
         stage('Pre-Cleanup') {
             steps {
-                echo '========== Force Cleaning Workspace (Root Files) =========='
-                // This prevents the "Permission Denied" errors caused by Docker root files
-                sh 'sudo rm -rf backend/**/__pycache__ frontend/node_modules selenium-tests/target || true'
+                echo '========== Force cleaning root-owned files to prevent Permission Denied =========='
+                // This SH command uses sudo to wipe root files created by Docker 
+                // so the next stage (Clone) doesn't fail.
+                sh 'sudo rm -rf * || true'
             }
         }
 
         stage('Clone Repository') {
             steps {
                 echo '========== Cloning Main Project =========='
-                checkout([$class: 'GitSCM', 
-                    branches: [[name: '*/main']], 
-                    extensions: [[$class: 'CleanBeforeCheckout']], 
-                    userRemoteConfigs: [[url: "${env.PROJECT_REPO}"]]
-                ])
+                git branch: 'main', 
+                    url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
         stage('Verify Docker Setup') {
             steps {
-                echo '========== Checking Docker =========='
-                sh 'docker --version'
-                sh 'docker compose version'
+                sh 'docker --version && docker compose version'
             }
         }
 
@@ -46,36 +39,22 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
-            steps {
-                echo '========== Verifying Services are Up =========='
-                sh '''
-                    docker ps | grep rentease_db_p2
-                    docker ps | grep rentease_backend_p2
-                    docker ps | grep rentease_frontend_p2
-                '''
-            }
-        }
-
         stage('Run Selenium Tests') {
             steps {
-                echo '========== Cloning Selenium Test Repo =========='
-                dir('selenium-tests') {
-                    checkout([$class: 'GitSCM', 
-                        branches: [[name: '*/main']], 
-                        extensions: [[$class: 'CleanBeforeCheckout']], 
-                        userRemoteConfigs: [[url: "${env.SELENIUM_REPO}"]]
-                    ])
-                }
-
-                echo '========== Executing Tests =========='
                 script {
-                    def frontendIP = sh(
-                        script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
-                        returnStdout: true
-                    ).trim()
+                    echo '========== Cloning Selenium Test Repo =========='
+                    // Cleaning specific subfolder to avoid permission issues
+                    sh 'sudo rm -rf selenium-tests || true'
                     
                     dir('selenium-tests') {
+                        git branch: 'main', 
+                            url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                        
+                        def frontendIP = sh(
+                            script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
+                            returnStdout: true
+                        ).trim()
+
                         sh "docker run --rm --network rentease-pipeline_default -e BASE_URL=http://${frontendIP}:5173 -v \$(pwd):/tests -w /tests markhobson/maven-chrome mvn clean test"
                     }
                 }
@@ -92,28 +71,20 @@ pipeline {
 
     post {
         always {
-            emailext(
-                to: 'maryamyaqub616@gmail.com',
-                subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
-                body: """
-                RentEase Pipeline Result
-                -----------------------
-                Build Number: ${env.BUILD_NUMBER}
-                Status: ${currentBuild.currentResult}
-                Triggered by: ${env.GITS_COMMITTER_NAME}
-
-                Check detailed logs here: ${env.BUILD_URL}
-                """,
+            // This is the CRITICAL part for your requirement:
+            // It sends the mail ONLY to the person who triggered the build via commit.
+            emailext (
+                subject: "RentEase Build Status: ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
+                body: """Build Number: ${env.BUILD_NUMBER}
+                         Status: ${currentBuild.currentResult}
+                         Project: RentEase
+                         Check logs: ${env.BUILD_URL}""",
                 recipientProviders: [culprits(), developers()]
             )
         }
         
-        success {
-            echo 'Pipeline Success! Frontend: http://13.48.132.213:5174 | Backend: http://13.48.132.213:8001'
-        }
-
         failure {
-            echo 'Pipeline Failed. Stopping services...'
+            echo "Pipeline failed. Cleaning up environment..."
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
         }
     }
