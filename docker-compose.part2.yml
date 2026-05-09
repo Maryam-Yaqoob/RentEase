@@ -42,23 +42,28 @@ services:
       - rentease_network
 
   frontend:
-    image: node:20-alpine
-    container_name: rentease_frontend_p2
-    working_dir: /app
-    user: "1000:1000"
-    volumes:
-      - ./frontend:/app
-      # Anonymous volume: prevents Docker from locking node_modules on your EC2
-      - /app/node_modules
-    ports:
-      - "5174:5173"
-    depends_on:
-      - backend
-    command: >
-      sh -c "npm install && npm run dev -- --host 0.0.0.0"
-    restart: unless-stopped
-    networks:
-      - rentease_network
+  image: node:20-alpine
+  container_name: rentease_frontend_p2
+  working_dir: /app
+  user: "1000:1000"
+  volumes:
+    - ./frontend:/app
+    - /app/node_modules
+  ports:
+    - "5174:5173"
+  depends_on:
+    - backend
+  command: >
+    sh -c "npm install && npm run dev -- --host 0.0.0.0"
+  restart: unless-stopped
+  networks:
+    - rentease_network
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:5173"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 60s
 
 volumes:
   postgres_data_p2:
