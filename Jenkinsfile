@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -8,12 +7,15 @@ pipeline {
     }
 
     stages {
-
         stage('Clone Repository') {
             steps {
                 echo '========== Cloning Main Project =========='
-                git branch: 'main',
-                    url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
+                // Added CleanBeforeCheckout to prevent permission errors
+                checkout([$class: 'GitSCM', 
+                    branches: [[name: '*/main']], 
+                    extensions: [[$class: 'CleanBeforeCheckout']], 
+                    userRemoteConfigs: [[url: 'https://github.com/Maryam-Yaqoob/RentEase.git']]
+                ])
             }
         }
 
@@ -66,8 +68,12 @@ pipeline {
                 echo '========== Cloning Selenium Test Repo =========='
 
                 dir('selenium-tests') {
-                    git branch: 'main',
-                        url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                    // Using checkout with clean to ensure target folder issues don't crash the build
+                    checkout([$class: 'GitSCM', 
+                        branches: [[name: '*/main']], 
+                        extensions: [[$class: 'CleanBeforeCheckout']], 
+                        userRemoteConfigs: [[url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git']]
+                    ])
                 }
 
                 echo '========== Running Selenium Tests =========='
@@ -103,10 +109,10 @@ pipeline {
     }
 
     post {
-
         always {
+            // FIXED: Removed hardcoded email and used recipientProviders
+            // This sends the email to you (the one pushing the change)
             emailext(
-                to: 'qasimalik@gmail.com',
                 subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                 body: """
 RentEase Pipeline Result
@@ -122,7 +128,8 @@ https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests
 
 Build URL:
 ${env.BUILD_URL}
-"""
+""",
+                recipientProviders: [culprits(), developers()]
             )
         }
 
