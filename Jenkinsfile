@@ -2,80 +2,56 @@ pipeline {
     agent {
         node {
             label ''
-            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-v3"
+            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-v4"
         }
     }
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
-        COMPOSE_PROJECT_NAME = "rentease-final-v3"
+        COMPOSE_PROJECT_NAME = "rentease-final-v4"
     }
 
     stages {
-
-        stage('Initialize') {
+        stage('Initialize & Force Cleanup') {
             steps {
-                echo '========== Starting Fresh Pipeline =========='
-
-                sh '''
-                    sudo chmod -R 777 /var/lib/jenkins/workspace/RentEase-Final-v3 || true
-                    sudo chown -R jenkins:jenkins /var/lib/jenkins/workspace/RentEase-Final-v3 || true
-
-                    sudo find /var/lib/jenkins/workspace/RentEase-Final-v3 -name "__pycache__" -type d -exec rm -rf {} + || true
-                    sudo find /var/lib/jenkins/workspace/RentEase-Final-v3 -name "*.pyc" -delete || true
-                '''
-
-                deleteDir()
+                echo '========== Cleaning Workspace via Docker =========='
+                // Using Docker to clean ensures root files are deleted without needing EC2 sudo
+                sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
             }
         }
 
         stage('Clone Repository') {
             steps {
-                git branch: 'main',
-                url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
+                echo '========== Cloning Main Project =========='
+                git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
-        stage('Build & Start') {
+        stage('Build & Start Services') {
             steps {
-
-                sh """
-                    docker compose -p ${COMPOSE_PROJECT_NAME} \
-                    -f ${env.DOCKER_COMPOSE_FILE} down || true
-                """
-
-                sh """
-                    docker compose -p ${COMPOSE_PROJECT_NAME} \
-                    -f ${env.DOCKER_COMPOSE_FILE} build --no-cache
-                """
-
-                sh """
-                    docker compose -p ${COMPOSE_PROJECT_NAME} \
-                    -f ${env.DOCKER_COMPOSE_FILE} up -d
-                """
-
-                sh 'sleep 20'
+                echo '========== Launching Containers =========='
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down --remove-orphans || true"
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
+                echo 'Waiting for services to stabilize...'
+                sh 'sleep 30' 
             }
         }
 
         stage('Run Selenium Tests') {
             steps {
                 script {
-
                     dir('selenium-tests') {
-
-                        git branch: 'main',
-                        url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
-
-                        def frontendIP = sh(
-                            script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
-                            returnStdout: true
-                        ).trim()
-
+                        echo '========== Running Selenium Suite =========='
+                        git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                        
+                        // Robust way to get the internal container name/IP
+                        def frontendService = "rentease_frontend_p2"
+                        
                         sh """
                         docker run --rm \
-                          --network ${COMPOSE_PROJECT_NAME}_rentease_network \
-                          -e BASE_URL=http://${frontendIP}:5173 \
+                          --network ${COMPOSE_PROJECT_NAME}_default \
+                          -e BASE_URL=http://${frontendService}:5173 \
                           -v \$(pwd):/tests \
                           -w /tests \
                           markhobson/maven-chrome \
@@ -84,7 +60,6 @@ pipeline {
                     }
                 }
             }
-
             post {
                 always {
                     dir('selenium-tests') {
@@ -96,54 +71,37 @@ pipeline {
     }
 
     post {
-
         always {
-
             script {
+                try {
+                    // Extracting the actual person who pushed the code
+                    def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
+                    def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
 
-                // Get latest GitHub committer info
-                def authorName = sh(
-                    script: "git log -1 --pretty=format:%an",
-                    returnStdout: true
-                ).trim()
+                    emailext (
+                        to: "${authorEmail}, maryamyaqub616@gmail.com",
+                        subject: "RentEase Build Result: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
+                        body: """
+                        RentEase Pipeline Result
+                        -----------------------
+                        Build Number: ${env.BUILD_NUMBER}
+                        Status: ${currentBuild.currentResult}
+                        Triggered by: ${authorName} (${authorEmail})
 
-                def authorEmail = sh(
-                    script: "git log -1 --pretty=format:%ae",
-                    returnStdout: true
-                ).trim()
-
-                // fallback email
-                if (!authorEmail) {
-                    authorEmail = "maryamyaqub616@gmail.com"
+                        Logs: ${env.BUILD_URL}
+                        """,
+                        recipientProviders: [culprits(), developers()]
+                    )
+                } catch (Exception e) {
+                    emailext (
+                        to: "maryamyaqub616@gmail.com",
+                        subject: "RentEase Pipeline Alert #${env.BUILD_NUMBER}",
+                        body: "Build failed during initialization. Status: ${currentBuild.currentResult}"
+                    )
                 }
-
-                emailext(
-                    to: "${authorEmail}",
-                    subject: "RentEase Build ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
-                    body: """
-RentEase CI/CD Pipeline Result
-
-Build Number: ${env.BUILD_NUMBER}
-Status: ${currentBuild.currentResult}
-
-Triggered Committer:
-${authorName}
-${authorEmail}
-
-Build URL:
-${env.BUILD_URL}
-""",
-                    recipientProviders: [
-                        culprits(),
-                        developers()
-                    ]
-                )
             }
-
-            sh """
-                docker compose -p ${COMPOSE_PROJECT_NAME} \
-                -f ${env.DOCKER_COMPOSE_FILE} down || true
-            """
+            // Force down and remove volumes to prevent "Resource in use" errors
+            sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v || true"
         }
     }
 }
