@@ -6,21 +6,20 @@ pipeline {
     }
 
     stages {
-        stage('Environment Setup') {
+        stage('Fix Permissions & Cleanup') {
             steps {
-                echo '========== Cleaning Workspace =========='
-                // Using internal deleteDir to clear anything not root-owned
-                deleteDir() 
+                echo '========== Cleaning Workspace via Docker to bypass sudo restrictions =========='
+                // This uses a small docker container to wipe the workspace. 
+                // Since Docker created the root files, Docker is the best tool to delete them.
+                sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
             }
         }
 
         stage('Clone Repository') {
             steps {
                 echo '========== Cloning Main Project =========='
-                checkout([$class: 'GitSCM', 
-                    branches: [[name: '*/main']], 
-                    userRemoteConfigs: [[url: 'https://github.com/Maryam-Yaqoob/RentEase.git']]
-                ])
+                git branch: 'main', 
+                    url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
@@ -34,14 +33,17 @@ pipeline {
 
         stage('Run Selenium Tests') {
             steps {
-                dir('selenium-tests') {
-                    echo '========== Cloning Selenium Test Repo =========='
-                    git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
-                    
-                    script {
-                        def frontendIP = sh(script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2", returnStdout: true).trim()
+                script {
+                    echo '========== Cloning & Running Selenium Tests =========='
+                    dir('selenium-tests') {
+                        git branch: 'main', 
+                            url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
                         
-                        // We use -u root inside docker to ensure it can write/read its own files
+                        def frontendIP = sh(
+                            script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
+                            returnStdout: true
+                        ).trim()
+
                         sh "docker run --rm --network rentease-pipeline_default -e BASE_URL=http://${frontendIP}:5173 -v \$(pwd):/tests -w /tests markhobson/maven-chrome mvn clean test"
                     }
                 }
@@ -58,19 +60,18 @@ pipeline {
 
     post {
         always {
+            // Requirement: Send mail to the one who triggers (culprits/developers)
             emailext (
                 subject: "RentEase Build Status: ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
                 body: """Build Number: ${env.BUILD_NUMBER}
                          Status: ${currentBuild.currentResult}
-                         Triggered by: ${env.GITS_COMMITTER_NAME}
+                         Project: RentEase
                          Check logs: ${env.BUILD_URL}""",
                 recipientProviders: [culprits(), developers()]
             )
             
-            echo "Cleaning up Docker..."
+            echo "Cleaning up Docker environment..."
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
-            // This final step tries to fix permissions for the NEXT build
-            sh "docker run --rm -v ${WORKSPACE}:/workspace alpine chown -R 1000:1000 /workspace || true"
         }
     }
 }
