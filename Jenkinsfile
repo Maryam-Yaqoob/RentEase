@@ -2,20 +2,20 @@ pipeline {
     agent {
         node {
             label ''
-            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-v4"
+            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-Success"
         }
     }
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
-        COMPOSE_PROJECT_NAME = "rentease-final-v4"
+        COMPOSE_PROJECT_NAME = "rentease-final"
     }
 
     stages {
-        stage('Initialize & Force Cleanup') {
+        stage('Initial Cleanup') {
             steps {
-                echo '========== Cleaning Workspace via Docker =========='
-                // Using Docker to clean ensures root files are deleted without needing EC2 sudo
+                echo '========== Force Cleaning Workspace =========='
+                // Docker is used to wipe everything because it has permission to delete its own root files
                 sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
             }
         }
@@ -30,7 +30,7 @@ pipeline {
         stage('Build & Start Services') {
             steps {
                 echo '========== Launching Containers =========='
-                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down --remove-orphans || true"
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
                 echo 'Waiting for services to stabilize...'
@@ -45,13 +45,16 @@ pipeline {
                         echo '========== Running Selenium Suite =========='
                         git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
                         
-                        // Robust way to get the internal container name/IP
-                        def frontendService = "rentease_frontend_p2"
+                        // Finds the actual network name dynamically
+                        def actualNetwork = sh(
+                            script: "docker inspect rentease_frontend_p2 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}{{end}}'",
+                            returnStdout: true
+                        ).trim()
                         
                         sh """
                         docker run --rm \
-                          --network ${COMPOSE_PROJECT_NAME}_default \
-                          -e BASE_URL=http://${frontendService}:5173 \
+                          --network ${actualNetwork} \
+                          -e BASE_URL=http://rentease_frontend_p2:5173 \
                           -v \$(pwd):/tests \
                           -w /tests \
                           markhobson/maven-chrome \
@@ -74,11 +77,12 @@ pipeline {
         always {
             script {
                 try {
-                    // Extracting the actual person who pushed the code
+                    // This captures the committer name and email for the requirement
                     def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
                     def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
 
                     emailext (
+                        // Mail goes to BOTH you and the person who pushed (Sir Qasim or you)
                         to: "${authorEmail}, maryamyaqub616@gmail.com",
                         subject: "RentEase Build Result: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
                         body: """
@@ -96,11 +100,11 @@ pipeline {
                     emailext (
                         to: "maryamyaqub616@gmail.com",
                         subject: "RentEase Pipeline Alert #${env.BUILD_NUMBER}",
-                        body: "Build failed during initialization. Status: ${currentBuild.currentResult}"
+                        body: "Pipeline failed early. Status: ${currentBuild.currentResult}"
                     )
                 }
             }
-            // Force down and remove volumes to prevent "Resource in use" errors
+            // Cleans up containers and networks so Sir Qasim sees a clean environment
             sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v || true"
         }
     }
