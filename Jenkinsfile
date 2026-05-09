@@ -2,6 +2,7 @@ pipeline {
     agent {
         node {
             label ''
+            // Using a specific workspace path to ensure a fresh, unlocked start
             customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-Success"
         }
     }
@@ -9,31 +10,32 @@ pipeline {
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
         COMPOSE_PROJECT_NAME = "rentease-final"
+        MAIN_REPO = "https://github.com/Maryam-Yaqoob/RentEase.git"
+        TEST_REPO = "https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git"
     }
 
     stages {
         stage('Initial Cleanup') {
             steps {
-                echo '========== Force Cleaning Workspace =========='
-                // Docker is used to wipe everything because it has permission to delete its own root files
+                echo '========== Force Cleaning Workspace via Docker =========='
                 sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
             }
         }
 
-        stage('Clone Repository') {
+        stage('Clone Main Project') {
             steps {
-                echo '========== Cloning Main Project =========='
-                git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
+                echo '========== Cloning Main Repository =========='
+                git branch: 'main', url: "${env.MAIN_REPO}"
             }
         }
 
         stage('Build & Start Services') {
             steps {
-                echo '========== Launching Containers =========='
+                echo '========== Launching Backend & Frontend =========='
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
-                echo 'Waiting for services to stabilize...'
+                echo 'Waiting for services to stabilize (30s)...'
                 sh 'sleep 30' 
             }
         }
@@ -41,15 +43,18 @@ pipeline {
         stage('Run Selenium Tests') {
             steps {
                 script {
-                    dir('selenium-tests') {
-                        echo '========== Running Selenium Suite =========='
-                        git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                    // Create a separate directory for the test repository
+                    dir('test-automation') {
+                        echo '========== Cloning Selenium Test Repository =========='
+                        git branch: 'main', url: "${env.TEST_REPO}"
                         
-                        // Finds the actual network name dynamically
+                        // Dynamically detect the network name to avoid "Network not found" errors
                         def actualNetwork = sh(
                             script: "docker inspect rentease_frontend_p2 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}{{end}}'",
                             returnStdout: true
                         ).trim()
+                        
+                        echo "Running tests on network: ${actualNetwork}"
                         
                         sh """
                         docker run --rm \
@@ -65,7 +70,7 @@ pipeline {
             }
             post {
                 always {
-                    dir('selenium-tests') {
+                    dir('test-automation') {
                         junit '**/target/surefire-reports/*.xml'
                     }
                 }
@@ -77,17 +82,16 @@ pipeline {
         always {
             script {
                 try {
-                    // This captures the committer name and email for the requirement
+                    // Extract metadata of the person who pushed the code
                     def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
                     def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
 
                     emailext (
-                        // Mail goes to BOTH you and the person who pushed (Sir Qasim or you)
                         to: "${authorEmail}, maryamyaqub616@gmail.com",
-                        subject: "RentEase Build Result: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
+                        subject: "RentEase Build Status: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
                         body: """
-                        RentEase Pipeline Result
-                        -----------------------
+                        RentEase Pipeline Notification
+                        ------------------------------
                         Build Number: ${env.BUILD_NUMBER}
                         Status: ${currentBuild.currentResult}
                         Triggered by: ${authorName} (${authorEmail})
@@ -100,11 +104,11 @@ pipeline {
                     emailext (
                         to: "maryamyaqub616@gmail.com",
                         subject: "RentEase Pipeline Alert #${env.BUILD_NUMBER}",
-                        body: "Pipeline failed early. Status: ${currentBuild.currentResult}"
+                        body: "Pipeline finished. Status: ${currentBuild.currentResult}. (Git metadata unavailable)"
                     )
                 }
             }
-            // Cleans up containers and networks so Sir Qasim sees a clean environment
+            echo "Cleaning up Docker resources..."
             sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v || true"
         }
     }
