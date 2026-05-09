@@ -1,8 +1,9 @@
 pipeline {
     agent {
+        // Corrected syntax for Custom Workspace
         node {
-            // By adding '-v2' to the workspace name, we bypass the locked/broken folder entirely
-            customWorkspace "/var/lib/jenkins/workspace/RentEase-Pipeline-v2"
+            label ''
+            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-v3"
         }
     }
 
@@ -11,19 +12,16 @@ pipeline {
     }
 
     stages {
-        stage('Initial Cleanup') {
+        stage('Initialize') {
             steps {
-                echo '========== Cleaning Workspace =========='
-                // This wipes the new workspace to keep it tidy
-                deleteDir()
+                echo '========== Starting Fresh Pipeline =========='
+                deleteDir() 
             }
         }
 
         stage('Clone Repository') {
             steps {
-                echo '========== Cloning Main Project =========='
-                git branch: 'main', 
-                    url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
+                git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
@@ -39,14 +37,10 @@ pipeline {
             steps {
                 script {
                     dir('selenium-tests') {
-                        git branch: 'main', 
-                            url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                        git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
                         
-                        def frontendIP = sh(
-                            script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2",
-                            returnStdout: true
-                        ).trim()
-
+                        def frontendIP = sh(script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2", returnStdout: true).trim()
+                        
                         sh "docker run --rm --network rentease-pipeline_default -e BASE_URL=http://${frontendIP}:5173 -v \$(pwd):/tests -w /tests markhobson/maven-chrome mvn clean test"
                     }
                 }
@@ -64,8 +58,8 @@ pipeline {
     post {
         always {
             script {
-                // Logic to identify the committer to fix the 'Triggered by: null' issue
-                def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim() ?: "Committer"
+                // FIXED: Logic to ensure the committer (triggering person) gets the mail
+                def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim() ?: "Developer"
                 def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim() ?: "maryamyaqub616@gmail.com"
 
                 emailext (
@@ -83,7 +77,6 @@ pipeline {
                     recipientProviders: [culprits(), developers()]
                 )
             }
-            // Cleanup services
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
         }
     }
