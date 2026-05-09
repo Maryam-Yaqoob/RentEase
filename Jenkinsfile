@@ -1,6 +1,5 @@
 pipeline {
     agent {
-        // Corrected syntax for Custom Workspace
         node {
             label ''
             customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-v3"
@@ -9,6 +8,8 @@ pipeline {
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
+        // This variable automatically finds the correct network name created by Compose
+        COMPOSE_PROJECT_NAME = "rentease-final-v3"
     }
 
     stages {
@@ -27,8 +28,8 @@ pipeline {
 
         stage('Build & Start') {
             steps {
-                sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
-                sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} up -d"
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
+                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
                 sh 'sleep 15'
             }
         }
@@ -41,7 +42,16 @@ pipeline {
                         
                         def frontendIP = sh(script: "docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' rentease_frontend_p2", returnStdout: true).trim()
                         
-                        sh "docker run --rm --network rentease-pipeline_default -e BASE_URL=http://${frontendIP}:5173 -v \$(pwd):/tests -w /tests markhobson/maven-chrome mvn clean test"
+                        // FIXED: Using ${COMPOSE_PROJECT_NAME}_default to match the new workspace
+                        sh """
+                        docker run --rm \
+                          --network ${COMPOSE_PROJECT_NAME}_default \
+                          -e BASE_URL=http://${frontendIP}:5173 \
+                          -v \$(pwd):/tests \
+                          -w /tests \
+                          markhobson/maven-chrome \
+                          mvn clean test
+                        """
                     }
                 }
             }
@@ -77,7 +87,7 @@ pipeline {
                     recipientProviders: [culprits(), developers()]
                 )
             }
-            sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
+            sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down || true"
         }
     }
 }
