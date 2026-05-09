@@ -74,7 +74,7 @@ pipeline {
 
                         sh """
                         docker run --rm \
-                          --network ${COMPOSE_PROJECT_NAME}_default \
+                          --network ${COMPOSE_PROJECT_NAME}_rentease_network \
                           -e BASE_URL=http://${frontendIP}:5173 \
                           -v \$(pwd):/tests \
                           -w /tests \
