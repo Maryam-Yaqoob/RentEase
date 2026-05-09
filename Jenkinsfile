@@ -6,12 +6,14 @@ pipeline {
     }
 
     stages {
-        stage('Fix Permissions & Cleanup') {
+        stage('Self-Heal & Cleanup') {
             steps {
-                echo '========== Cleaning Workspace via Docker to bypass sudo restrictions =========='
-                // This uses a small docker container to wipe the workspace. 
-                // Since Docker created the root files, Docker is the best tool to delete them.
-                sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
+                echo '========== Removing Git Locks and Root Files =========='
+                // 1. This deletes the .lock file automatically if it exists
+                // 2. This uses Docker to wipe root-owned folders that cause Permission Denied
+                sh '''
+                    docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -f /ws/.git/config.lock && rm -rf /ws/* /ws/.[!.]*"
+                '''
             }
         }
 
@@ -34,7 +36,6 @@ pipeline {
         stage('Run Selenium Tests') {
             steps {
                 script {
-                    echo '========== Cloning & Running Selenium Tests =========='
                     dir('selenium-tests') {
                         git branch: 'main', 
                             url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
@@ -60,17 +61,28 @@ pipeline {
 
     post {
         always {
-            // Requirement: Send mail to the one who triggers (culprits/developers)
-            emailext (
-                subject: "RentEase Build Status: ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
-                body: """Build Number: ${env.BUILD_NUMBER}
-                         Status: ${currentBuild.currentResult}
-                         Project: RentEase
-                         Check logs: ${env.BUILD_URL}""",
-                recipientProviders: [culprits(), developers()]
-            )
+            script {
+                // Manually extracting committer to fix the "Triggered by: null" issue
+                def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim() ?: "System"
+                def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim() ?: "maryamyaqub616@gmail.com"
+
+                emailext (
+                    to: "${authorEmail}, maryamyaqub616@gmail.com",
+                    subject: "RentEase Build Status: ${currentBuild.currentResult} - Build #${env.BUILD_NUMBER}",
+                    body: """
+                    RentEase Pipeline Result
+                    -----------------------
+                    Build Number: ${env.BUILD_NUMBER}
+                    Status: ${currentBuild.currentResult}
+                    Triggered by: ${authorName} (${authorEmail})
+
+                    Check detailed logs here: ${env.BUILD_URL}
+                    """,
+                    recipientProviders: [culprits(), developers()]
+                )
+            }
             
-            echo "Cleaning up Docker environment..."
+            echo "Cleaning up environment..."
             sh "docker compose -f ${env.DOCKER_COMPOSE_FILE} down || true"
         }
     }
