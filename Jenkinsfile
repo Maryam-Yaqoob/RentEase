@@ -34,24 +34,21 @@ pipeline {
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
                 sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
-                
+
                 echo 'Waiting for frontend to be ready...'
                 sh '''
-                    echo "Waiting for frontend container to be healthy..."
-                    for i in $(seq 1 30); do
-                        STATUS=$(docker inspect --format='{{.State.Health.Status}}' rentease_frontend_p2 2>/dev/null || echo "unknown")
-                        echo "Attempt $i: frontend status = $STATUS"
-                        if [ "$STATUS" = "healthy" ]; then
-                            echo "Frontend is ready!"
-                            break
+                    echo "Waiting for frontend to respond..."
+                    for i in $(seq 1 40); do
+                        if docker exec rentease_frontend_p2 curl -sf http://localhost:5173 > /dev/null 2>&1; then
+                            echo "Frontend is ready after attempt $i!"
+                            exit 0
                         fi
-                        if [ "$i" = "30" ]; then
-                            echo "Frontend did not become healthy in time"
-                            exit 1
-                        fi
+                        echo "Attempt $i: not ready yet, waiting 10s..."
                         sleep 10
-                done
-            '''
+                    done
+                    echo "Frontend did not become ready in time!"
+                    exit 1
+                '''
             }
         }
 
@@ -61,23 +58,21 @@ pipeline {
                     dir('test-automation') {
                         echo '========== Cloning Selenium Test Repository =========='
                         git branch: 'main', url: "${env.TEST_REPO}"
-                        
+
                         def actualNetwork = sh(
                             script: "docker inspect rentease_frontend_p2 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}{{end}}'",
                             returnStdout: true
                         ).trim()
-                        
+
                         echo "Running tests on network: ${actualNetwork}"
-                        
-                        // Added -Dsurefire.rerunFailingTestsCount=2 just in case, 
-                        // but the longer sleep should fix the core issue.
+
                         sh """
-                        docker run --rm \
-                          --network ${actualNetwork} \
-                          -e BASE_URL=http://rentease_frontend_p2:5173 \
-                          -v \$(pwd):/tests \
-                          -w /tests \
-                          markhobson/maven-chrome \
+                        docker run --rm \\
+                          --network ${actualNetwork} \\
+                          -e BASE_URL=http://rentease_frontend_p2:5173 \\
+                          -v \$(pwd):/tests \\
+                          -w /tests \\
+                          markhobson/maven-chrome \\
                           mvn clean test -Dsurefire.rerunFailingTestsCount=2
                         """
                     }
