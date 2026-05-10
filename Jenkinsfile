@@ -1,83 +1,84 @@
 pipeline {
-    agent {
-        node {
-            label ''
-            customWorkspace "/var/lib/jenkins/workspace/RentEase-Final-Success"
-        }
-    }
+    agent any
 
     environment {
         DOCKER_COMPOSE_FILE = 'docker-compose.part2.yml'
-        COMPOSE_PROJECT_NAME = "rentease-final"
-        MAIN_REPO = "https://github.com/Maryam-Yaqoob/RentEase.git"
-        TEST_REPO = "https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git"
+        PROJECT_DIR = '/var/jenkins_home/workspace/RentEase-Pipeline'
     }
 
     stages {
-        stage('Initialize & Force Cleanup') {
+        stage('Clone Repository') {
             steps {
-                echo '========== Force Cleaning Workspace via Docker =========='
-                sh 'docker run --rm -v ${WORKSPACE}:/ws alpine sh -c "rm -rf /ws/* /ws/.[!.]*"'
+                echo '========== Cloning Main Project =========='
+                git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase.git'
             }
         }
 
-        stage('Clone Main Project') {
+        stage('Verify Docker Setup') {
             steps {
-                echo '========== Cloning Main Repository =========='
-                git branch: 'main', url: "${env.MAIN_REPO}"
+                echo '========== Checking Docker and Docker Compose =========='
+                sh 'docker --version'
+                sh 'docker compose --version'
             }
         }
 
-        stage('Build & Start Services') {
+        stage('Build Docker Images') {
             steps {
-                echo '========== Launching Backend & Frontend =========='
-                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v --remove-orphans || true"
-                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} build --no-cache"
-                sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} up -d"
+                echo '========== Building Docker Images =========='
+                sh 'docker compose -f ${DOCKER_COMPOSE_FILE} build'
+            }
+        }
 
-                echo 'Waiting 120s for services to start...'
-                sh 'sleep 120'
+        stage('Start Services') {
+            steps {
+                echo '========== Stopping Previous Services (if running) =========='
+                sh 'docker compose -f ${DOCKER_COMPOSE_FILE} down || true'
+                sh 'sleep 5'
 
-                echo 'Checking container statuses...'
-                sh 'docker ps -a'
+                echo '========== Starting Services =========='
+                sh 'docker compose -f ${DOCKER_COMPOSE_FILE} up -d'
+                sh 'sleep 15'
+            }
+        }
 
-                echo 'Frontend logs:'
-                sh 'docker logs rentease_frontend_p2 || true'
+        stage('Health Check') {
+            steps {
+                echo '========== Verifying Services Health =========='
+                sh '''
+                    echo "Checking PostgreSQL..."
+                    docker exec rentease_db_p2 pg_isready -U postgres
 
-                echo 'Backend logs:'
-                sh 'docker logs rentease_backend_p2 || true'
+                    echo "Checking Backend API..."
+                    docker exec rentease_backend_p2 python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/docs')" || echo "Backend starting - expected"
+
+                    echo "Checking Frontend..."
+                    docker ps | grep rentease_frontend_p2
+                '''
             }
         }
 
         stage('Run Selenium Tests') {
+            agent {
+                docker {
+                    image 'markhobson/maven-chrome'
+                    args '-u root:root -v /var/lib/jenkins/.m2:/root/.m2'
+                    reuseNode true
+                }
+            }
             steps {
-                script {
-                    dir('test-automation') {
-                        echo '========== Cloning Selenium Test Repository =========='
-                        git branch: 'main', url: "${env.TEST_REPO}"
+                echo '========== Cloning Test Cases Repo =========='
+                dir('selenium-tests') {
+                    git branch: 'main', url: 'https://github.com/Maryam-Yaqoob/RentEase-Selenium-Tests.git'
+                }
 
-                        def actualNetwork = sh(
-                            script: "docker inspect rentease_frontend_p2 -f '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}{{end}}'",
-                            returnStdout: true
-                        ).trim()
-
-                        echo "Running tests on network: ${actualNetwork}"
-
-                        sh """
-                        docker run --rm \\
-                          --network ${actualNetwork} \\
-                          -e BASE_URL=http://rentease_frontend_p2:5173 \\
-                          -v \$(pwd):/tests \\
-                          -w /tests \\
-                          markhobson/maven-chrome \\
-                          mvn clean test -Dsurefire.rerunFailingTestsCount=2
-                        """
-                    }
+                echo '========== Running Selenium Tests =========='
+                dir('selenium-tests') {
+                    sh 'mvn test'
                 }
             }
             post {
                 always {
-                    dir('test-automation') {
+                    dir('selenium-tests') {
                         junit '**/target/surefire-reports/*.xml'
                     }
                 }
@@ -88,34 +89,95 @@ pipeline {
     post {
         always {
             script {
-                try {
-                    def authorName = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
-                    def authorEmail = sh(script: "git log -1 --pretty=format:'%ae'", returnStdout: true).trim()
+                sh "git config --global --add safe.directory ${env.WORKSPACE} || true"
 
-                    emailext (
-                        to: "${authorEmail}, maryamyaqub616@gmail.com",
-                        subject: "RentEase Build Status: ${currentBuild.currentResult} - #${env.BUILD_NUMBER}",
-                        body: """
-                        RentEase Pipeline Result
-                        -----------------------
-                        Build Number: ${env.BUILD_NUMBER}
-                        Status: ${currentBuild.currentResult}
-                        Triggered by: ${authorName} (${authorEmail})
+                def committer = sh(
+                    script: "git log -1 --pretty=format:'%ae'",
+                    returnStdout: true
+                ).trim()
 
-                        Logs: ${env.BUILD_URL}
-                        """,
-                        recipientProviders: [culprits(), developers()]
-                    )
-                } catch (Exception e) {
-                    emailext (
-                        to: "maryamyaqub616@gmail.com",
-                        subject: "RentEase Pipeline Alert #${env.BUILD_NUMBER}",
-                        body: "Pipeline finished. Status: ${currentBuild.currentResult}"
+                def xmlFiles = sh(
+                    script: "find ${env.WORKSPACE}/selenium-tests/target/surefire-reports -name '*.xml' 2>/dev/null || echo ''",
+                    returnStdout: true
+                ).trim()
+
+                def emailBody = ""
+                def total = 0
+                def passed = 0
+                def failed = 0
+                def skipped = 0
+                def details = ""
+
+                if (xmlFiles) {
+                    def raw = sh(
+                        script: "grep -h '<testcase' ${env.WORKSPACE}/selenium-tests/target/surefire-reports/*.xml 2>/dev/null || echo ''",
+                        returnStdout: true
+                    ).trim()
+
+                    if (raw) {
+                        raw.split('\n').each { line ->
+                            if (!line.trim()) return
+                            total++
+                            def nameMatcher = (line =~ /name="([^"]+)"/)
+                            def name = nameMatcher ? nameMatcher[0][1] : "Unknown"
+                            if (line.contains('<failure')) {
+                                failed++
+                                details += "${name} — FAILED\n"
+                            } else if (line.contains('<skipped')) {
+                                skipped++
+                                details += "${name} — SKIPPED\n"
+                            } else {
+                                passed++
+                                details += "${name} — PASSED\n"
+                            }
+                        }
+                    }
+
+                    emailBody = """
+RentEase - Build #${env.BUILD_NUMBER} Test Results
+Build Status: ${currentBuild.currentResult}
+
+=== Test Summary ===
+Total Tests:  ${total}
+Passed:       ${passed}
+Failed:       ${failed}
+Skipped:      ${skipped}
+
+=== Detailed Results ===
+${details}
+
+Build URL: ${env.BUILD_URL}
+"""
+                } else {
+                    emailBody = """
+RentEase - Build #${env.BUILD_NUMBER}
+Build Status: ${currentBuild.currentResult}
+
+No test results found (tests may have failed to run).
+
+Build URL: ${env.BUILD_URL}
+"""
+                }
+
+                if (committer && committer != '') {
+                    emailext(
+                        to: committer,
+                        subject: "RentEase Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult} - Test Results",
+                        body: emailBody
                     )
                 }
             }
-            echo "Cleaning up Docker resources..."
-            sh "docker compose -p ${COMPOSE_PROJECT_NAME} -f ${env.DOCKER_COMPOSE_FILE} down -v || true"
+        }
+
+        success {
+            echo '✅ Pipeline Completed Successfully!'
+            echo '  - Frontend: http://EC2_IP:5174'
+            echo '  - Backend API: http://EC2_IP:8001'
+        }
+
+        failure {
+            echo '❌ Pipeline Failed!'
+            sh 'docker compose -f ${DOCKER_COMPOSE_FILE} down || true'
         }
     }
 }
