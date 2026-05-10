@@ -1,5 +1,4 @@
 services:
-
   db:
     image: postgres:15
     container_name: rentease_db_p2
@@ -14,6 +13,11 @@ services:
     restart: unless-stopped
     networks:
       - rentease_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backend:
     image: python:3.11-slim
@@ -29,13 +33,19 @@ services:
     ports:
       - "8001:8000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
-             uvicorn main:app --host 0.0.0.0 --port 8000"
+             uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
     restart: unless-stopped
     networks:
       - rentease_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
     image: node:20-alpine
@@ -44,15 +54,23 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8001
     ports:
-      - "5174:5173"
+      - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     command: >
-      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+      sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
     restart: unless-stopped
     networks:
       - rentease_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5173"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data_p2:
