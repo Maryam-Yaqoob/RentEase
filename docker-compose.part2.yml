@@ -49,5 +49,3 @@ volumes:
   postgres_data_p2:
     driver: local
 
-
-Docker compose par2 main yeh paste kro
