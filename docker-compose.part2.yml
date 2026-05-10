@@ -19,7 +19,6 @@ services:
     image: python:3.11-slim
     container_name: rentease_backend_p2
     working_dir: /app
-    user: "1000:1000"
     volumes:
       - ./backend:/app
       - /app/__pycache__
@@ -42,7 +41,6 @@ services:
     image: node:20-alpine
     container_name: rentease_frontend_p2
     working_dir: /app
-    user: "1000:1000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -55,12 +53,6 @@ services:
     restart: unless-stopped
     networks:
       - rentease_network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:5173 || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 120s
 
 volumes:
   postgres_data_p2:
